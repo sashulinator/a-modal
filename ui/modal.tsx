@@ -3,64 +3,51 @@ import './modal.css'
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
-import { keyListener, stopPropagation } from '~/utils/dom-event'
-import { findFirstFocusable } from '~/utils/dom-event/find-first-focusable'
-import { fns } from '~/utils/function'
-import { useEventListener } from '~/utils/hooks'
-
 import { c, generateId } from '../../../utils/core'
-
-Modal.displayName = 'na-Modal'
-ModalWrapper.displayName = Modal.displayName
+import {
+  findFirstFocusable,
+  findLastFocusable,
+  findNextFocusableSibling,
+  findPreviousFocusableSibling,
+  keyListener,
+} from '../../../utils/dom-event'
+import { fns } from '../../../utils/function'
+import { usePreventUnintentionalClick } from '../lib/use-mouse-click'
 
 export interface Props extends React.HTMLAttributes<HTMLDivElement> {
   className?: string
   children: React.ReactNode
   containerElement: Element
   opened: boolean
-  firstFocused?: boolean
+  firstFocused?: boolean | undefined
   onDismiss?: ((event: MouseEvent | React.KeyboardEvent) => void) | undefined
 }
 
+const displayName = 'a-Modal'
+
 /**
- * Делаем Wrapper так как без него происходит преждевременная подписка в useEventListener
+ * Modal component
  */
-export default function ModalWrapper(props: Props): JSX.Element | null {
-  const { opened, ...modalProps } = props
-  if (!opened) return null
-  return <Modal {...modalProps} />
-}
-
 function Modal(props: Omit<Props, 'opened'>): JSX.Element {
-  const id = useMemo(() => generateId(), [])
-  const focusTaken = useRef<HTMLElement | null>(null)
-  const { containerElement, children, firstFocused, onDismiss, ...divProps } = props
+  const { containerElement, children, firstFocused = true, onDismiss, ...divProps } = props
 
+  const id = useMemo(generateId, [])
   const ref = useRef<HTMLDivElement | null>(null)
-  const mouseDownRef = useRef<HTMLElement | null>(null)
+  const focusTaken = useRef<HTMLElement | null>(null)
 
-  useLayoutEffect(() => {
-    focusTaken.current = document.activeElement as HTMLElement
-    if (ref.current === null) return
-    if (firstFocused) findFirstFocusable(ref.current)?.focus()
-    else ref.current.focus()
+  useLayoutEffect(_returnFocus, [])
+  useLayoutEffect(_focusInside, [])
 
-    return () => {
-      focusTaken.current?.focus?.()
-    }
-  }, [])
-
-  useEventListener('mousedown', (e) => (mouseDownRef.current = e.target as HTMLElement))
-  useEventListener('mouseup', (e) => mouseDownRef.current === ref.current && onDismiss?.(e))
+  usePreventUnintentionalClick(ref, onDismiss)
 
   return createPortal(
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <div
       {...divProps}
-      onKeyDown={fns(_handleKeyDown, stopPropagation, props.onKeyDown)}
+      onKeyDown={fns(_handleKeyDown, props.onKeyDown)}
       ref={ref}
       tabIndex={-1}
-      className={c(props.className, Modal.displayName, `id-${id}`)}
+      className={c(props.className, displayName, `id-${id}`)}
     >
       {children}
     </div>,
@@ -71,19 +58,58 @@ function Modal(props: Omit<Props, 'opened'>): JSX.Element {
    * Private
    */
 
-  function _handleKeyDown(e: React.KeyboardEvent): void {
-    keyListener({ key: 'Escape' }, () => onDismiss?.(e))(e)
-    keyListener({ key: 'Tab' }, () => setTimeout(_returnFocus))(e)
+  function _focusInside(): void {
+    if (ref.current === null) throw Error('`ref` does not exist')
+    ;(document.activeElement as HTMLElement)?.blur()
+    if (firstFocused) findFirstFocusable(ref.current)?.focus()
   }
 
-  function _returnFocus(): void {
-    function isInsideModal(element: HTMLElement): boolean {
-      if (element.parentElement?.classList.contains(`id-${id}`)) return true
-      return element.parentElement === null ? false : isInsideModal(element.parentElement)
+  function _returnFocus(): () => void {
+    focusTaken.current = document.activeElement as HTMLElement
+    return () => focusTaken.current?.focus?.()
+  }
+
+  function _handleKeyDown(e: React.KeyboardEvent): void {
+    if (!isElementInsideModal(e.target as HTMLElement)) return
+    keyListener({ key: 'Escape' }, onDismiss)(e)
+    keyListener({ key: 'Tab' }, _preventLosingFocus)(e)
+  }
+
+  function _preventLosingFocus(e: React.KeyboardEvent): void {
+    if (ref.current === null) throw Error('`ref` does not exist')
+
+    const next = e.shiftKey
+      ? findPreviousFocusableSibling(document.activeElement as HTMLElement)
+      : findNextFocusableSibling(document.activeElement as HTMLElement)
+
+    if (next === null) {
+      e.preventDefault()
+      findFirstFocusable(ref.current)?.focus()
+      return
     }
-    // TODO создать функцию getLastFocusable и проверять при нажатии Tab можно ли сменить фокус
-    if (ref.current === null) return
-    if (isInsideModal(document.activeElement as HTMLElement)) return
-    findFirstFocusable(ref.current)?.focus()
+
+    if (!isElementInsideModal(next)) {
+      e.preventDefault()
+      e.shiftKey ? findLastFocusable(ref.current)?.focus() : findFirstFocusable(ref.current)?.focus()
+    }
+  }
+
+  function isElementInsideModal(element: HTMLElement): boolean {
+    if (element.parentElement?.classList.contains(`id-${id}`)) return true
+    return element.parentElement === null ? false : isElementInsideModal(element.parentElement)
   }
 }
+
+Modal.displayName = displayName
+
+/**
+ * Private
+ */
+// Делаем Wrapper так как без него происходит преждевременная подписка в useEventListener
+export default function ModalWrapper(props: Props): JSX.Element | null {
+  const { opened, ...modalProps } = props
+  if (!opened) return null
+  return <Modal {...modalProps} />
+}
+
+ModalWrapper.displayName = displayName // The same name because of storybook title

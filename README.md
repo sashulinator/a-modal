@@ -2,20 +2,13 @@
 
 ## Description
 
-A component for positioning an element relative to another element.
+A Modal Component
 
 ## Features
 
-### Subscribe to DOM
+### Return focus
 
-The `a-modal` component
-
-- Returns the focus back to the element that was in focus before opening the modal
-- Prevent an unintentional click
-
-### Port `sourceElement` to `containerElement`
-
-Port `sourceElement` to `containerElement` by `React.createPortal`.
+Returns the focus back to the element that was in focus before opening the modal
 
 ## Subtree
 
